@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { RotateCw, Play, Pause, Edit3, Wifi, WifiOff, AlertCircle } from "lucide-react"
+import { RotateCw, Play, Pause, Edit3, Wifi, WifiOff, AlertCircle, X } from "lucide-react"
 
 export default function MirrorApp() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -15,7 +15,7 @@ export default function MirrorApp() {
 
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user")
-  const [isCameraOn, setIsCameraOn] = useState(true)
+  const [isCameraOn, setIsCameraOn] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [transcriptionText, setTranscriptionText] = useState("")
@@ -26,10 +26,12 @@ export default function MirrorApp() {
 
     try {
       const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || "ws://56.124.87.123:8000/ws"
+      console.log("[v0] Intentando conectar a WebSocket:", wsUrl)
 
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
+        console.log("[v0] WebSocket conectado exitosamente")
         setIsConnected(true)
         setConnectionError(null)
         setIsConnecting(false)
@@ -48,10 +50,12 @@ export default function MirrorApp() {
             }
           }
         } catch (err) {
+          console.error("[v0] Error parseando respuesta:", err)
         }
       }
 
       ws.onerror = (error) => {
+        console.error("[v0] Error en WebSocket:", error)
         setIsConnected(false)
         setIsConnecting(false)
         setConnectionError("Conexión bloqueada por seguridad. Usa wss:// o despliega con HTTP")
@@ -65,6 +69,7 @@ export default function MirrorApp() {
 
       wsRef.current = ws
     } catch (error) {
+      console.error("[v0] Error creando WebSocket:", error)
       if (error instanceof DOMException && error.message.includes("insecure")) {
         setConnectionError("HTTPS requiere wss:// - Configura SSL en tu servidor Python")
       } else {
@@ -117,6 +122,7 @@ export default function MirrorApp() {
     try {
       wsRef.current.send(JSON.stringify(message))
     } catch (err) {
+      console.error("[v0] Error enviando frame:", err)
     }
   }
 
@@ -164,7 +170,18 @@ export default function MirrorApp() {
         startSendingFrames()
       }
     } catch (err) {
-      setCameraError("Permiso de cámara denegado")
+      console.error("[v0] Error accessing camera:", err)
+      if (err instanceof DOMException) {
+        if (err.name === "NotAllowedError") {
+          setCameraError("Permiso de cámara denegado. Permite el acceso en tu navegador.")
+        } else if (err.name === "NotFoundError") {
+          setCameraError("No se encontró ninguna cámara en tu dispositivo.")
+        } else {
+          setCameraError("No se puede acceder a la cámara. Intenta recargar la página.")
+        }
+      } else {
+        setCameraError("Error desconocido al acceder a la cámara.")
+      }
       setIsCameraOn(false)
     }
   }
@@ -201,8 +218,6 @@ export default function MirrorApp() {
   }
 
   useEffect(() => {
-    startCamera()
-
     return () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
@@ -277,13 +292,30 @@ export default function MirrorApp() {
                 </div>
               )}
             </div>
+            <button
+              onClick={() => {
+                setConnectionError(null)
+                setCameraError(null)
+              }}
+              className="shrink-0 p-1 rounded hover:bg-red-500/20 transition-colors"
+            >
+              <X className="h-4 w-4 text-red-400" />
+            </button>
           </div>
         </div>
       )}
 
       <div className="flex-1 px-6 py-3 min-h-0">
         <div className="relative mx-auto h-full max-w-sm overflow-hidden rounded-lg bg-pink-300">
-          {cameraError ? (
+          {!isCameraOn ? (
+            <div className="flex h-full w-full items-center justify-center bg-zinc-900">
+              <div className="text-center">
+                <Play className="h-12 w-12 text-purple-400 mx-auto mb-2" />
+                <p className="text-sm text-zinc-400">Presiona Play para iniciar</p>
+                <p className="text-xs text-zinc-500 mt-1">La cámara se activará como espejo</p>
+              </div>
+            </div>
+          ) : cameraError ? (
             <div className="flex h-full w-full items-center justify-center bg-zinc-900">
               <div className="text-center">
                 <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-2" />
