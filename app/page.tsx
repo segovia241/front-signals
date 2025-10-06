@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { RotateCw, Play, Pause, Edit3, Wifi, WifiOff, AlertCircle, X } from "lucide-react"
+import { RotateCw, Play, Square, Edit3, Wifi, WifiOff, AlertCircle, X, Send } from "lucide-react"
 
 export default function MirrorApp() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -19,10 +19,12 @@ export default function MirrorApp() {
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   
-  // 🔥 CAMBIO: Estados separados para la traducción
-  const [currentPrediction, setCurrentPrediction] = useState("")
-  const [currentConfidence, setCurrentConfidence] = useState(0)
-  const [sentence, setSentence] = useState("")
+  // 🔥 CAMBIO: Estados para el nuevo flujo de grabación
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordedFrames, setRecordedFrames] = useState<string[]>([])
+  const [detectedWord, setDetectedWord] = useState("")
+  const [detectionConfidence, setDetectionConfidence] = useState(0)
+  const [isProcessing, setIsProcessing] = useState(false)
 
   const connectWebSocket = () => {
     setIsConnecting(true)
@@ -39,9 +41,6 @@ export default function MirrorApp() {
         setIsConnected(true)
         setConnectionError(null)
         setIsConnecting(false)
-        if (isCameraOn) {
-          startSendingFrames()
-        }
       }
 
       ws.onmessage = (event) => {
@@ -51,27 +50,16 @@ export default function MirrorApp() {
           if (response.type === "analysis") {
             const data = response.data
             
-            // 🔥 CAMBIO: Extraer solo la información importante
-            if (data.current_prediction && data.current_prediction !== "Ninguna") {
-              setCurrentPrediction(data.current_prediction)
-              setCurrentConfidence(data.current_confidence)
-            } else {
-              setCurrentPrediction("")
-              setCurrentConfidence(0)
+            // 🔥 CAMBIO: Procesar respuesta del análisis de grabación
+            if (data.detected_word) {
+              setDetectedWord(data.detected_word)
+              setDetectionConfidence(data.confidence || 0)
+              setIsProcessing(false)
+              console.log("[v0] Palabra detectada:", data.detected_word, "Confianza:", data.confidence)
             }
             
-            // 🔥 CAMBIO: Actualizar la oración acumulada
-            if (data.sentence && data.sentence !== "Ninguna") {
-              setSentence(data.sentence)
-            }
-            
-            // 🔥 CAMBIO: Log para debugging (opcional)
-            console.log("[v0] Traducción:", {
-              current: data.current_prediction,
-              confidence: data.current_confidence,
-              sentence: data.sentence,
-              status: data.status
-            })
+            // Para debugging
+            console.log("[v0] Respuesta del servidor:", data)
           }
         } catch (err) {
           console.error("[v0] Error parseando respuesta:", err)
@@ -88,7 +76,7 @@ export default function MirrorApp() {
       ws.onclose = () => {
         setIsConnected(false)
         setIsConnecting(false)
-        stopSendingFrames()
+        stopRecording()
       }
 
       wsRef.current = ws
@@ -112,63 +100,103 @@ export default function MirrorApp() {
     setIsConnected(false)
     setIsConnecting(false)
     setConnectionError(null)
-    stopSendingFrames()
+    stopRecording()
   }
 
-  const sendFrameToServer = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return
-    }
-
+  const captureFrame = (): string | null => {
     if (!videoRef.current || !canvasRef.current) {
-      return
+      return null
     }
 
     const video = videoRef.current
     const canvas = canvasRef.current
     const ctx = canvas.getContext("2d")
 
-    if (!ctx) return
+    if (!ctx) return null
 
     canvas.width = video.videoWidth || 640
     canvas.height = video.videoHeight || 480
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-    const imageData = canvas.toDataURL("image/jpeg", 0.7)
-
-    const message = {
-      type: "frame",
-      data: imageData,
-      timestamp: Date.now(),
-      dimensions: {
-        width: canvas.width,
-        height: canvas.height,
-      },
-    }
-
-    try {
-      wsRef.current.send(JSON.stringify(message))
-    } catch (err) {
-      console.error("[v0] Error enviando frame:", err)
-    }
+    return canvas.toDataURL("image/jpeg", 0.7)
   }
 
-  const startSendingFrames = () => {
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current)
+  const startRecording = () => {
+    if (!isConnected || !isCameraOn) {
+      alert("Primero conecta el WebSocket y activa la cámara")
+      return
     }
 
-    // 🔥 CAMBIO: Ajustar FPS a 15 (66ms entre frames)
+    setIsRecording(true)
+    setRecordedFrames([])
+    setDetectedWord("")
+    setDetectionConfidence(0)
+
+    // 🔥 Grabar frames cada 100ms (10 FPS para la grabación)
     frameIntervalRef.current = setInterval(() => {
-      sendFrameToServer()
-    }, 66) // 1000ms / 15fps = 66ms
+      const frame = captureFrame()
+      if (frame) {
+        setRecordedFrames(prev => [...prev, frame])
+      }
+    }, 100) // 10 FPS para grabación
+
+    console.log("[v0] Iniciando grabación...")
   }
 
-  const stopSendingFrames = () => {
+  const stopRecording = () => {
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current)
       frameIntervalRef.current = null
+    }
+    
+    if (isRecording) {
+      console.log("[v0] Grabación terminada. Frames capturados:", recordedFrames.length)
+    }
+    
+    setIsRecording(false)
+  }
+
+  const sendRecordingForAnalysis = async () => {
+    if (recordedFrames.length === 0) {
+      alert("No hay frames grabados. Primero graba una seña.")
+      return
+    }
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      alert("WebSocket no conectado")
+      return
+    }
+
+    setIsProcessing(true)
+    console.log("[v0] Enviando grabación para análisis...", recordedFrames.length, "frames")
+
+    try {
+      // 🔥 ENVIAR TODOS LOS FRAMES DE LA GRABACIÓN
+      for (let i = 0; i < recordedFrames.length; i++) {
+        const frame = recordedFrames[i]
+        
+        const message = {
+          type: "recording_frame",
+          data: frame,
+          timestamp: Date.now(),
+          frame_index: i,
+          total_frames: recordedFrames.length,
+          is_complete: i === recordedFrames.length - 1 // Último frame
+        }
+
+        wsRef.current.send(JSON.stringify(message))
+        
+        // Pequeña pausa entre frames para no saturar
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+
+      console.log("[v0] Grabación enviada completamente")
+      
+    } catch (err) {
+      console.error("[v0] Error enviando grabación:", err)
+      setIsProcessing(false)
+      alert("Error enviando la grabación")
     }
   }
 
@@ -183,7 +211,7 @@ export default function MirrorApp() {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: mode,
-          width: { ideal: 1280 }, // 🔥 CAMBIO: Reducir resolución para mejor performance
+          width: { ideal: 1280 },
           height: { ideal: 720 },
         },
         audio: false,
@@ -195,9 +223,7 @@ export default function MirrorApp() {
         videoRef.current.srcObject = mediaStream
       }
 
-      if (isConnected) {
-        startSendingFrames()
-      }
+      setIsCameraOn(true)
     } catch (err) {
       console.error("[v0] Error accessing camera:", err)
       if (err instanceof DOMException) {
@@ -216,6 +242,7 @@ export default function MirrorApp() {
   }
 
   const stopCamera = () => {
+    stopRecording()
     if (stream) {
       stream.getTracks().forEach((track) => track.stop())
       setStream(null)
@@ -223,39 +250,36 @@ export default function MirrorApp() {
         videoRef.current.srcObject = null
       }
     }
-    stopSendingFrames()
+    setIsCameraOn(false)
   }
 
   const toggleCameraOnOff = () => {
     if (isCameraOn) {
       stopCamera()
-      setIsCameraOn(false)
     } else {
       startCamera()
-      setIsCameraOn(true)
     }
   }
 
   const toggleCamera = () => {
     const newMode = facingMode === "user" ? "environment" : "user"
     setFacingMode(newMode)
-    startCamera(newMode)
+    if (isCameraOn) {
+      startCamera(newMode)
+    }
   }
 
   const toggleEditing = () => {
     setIsEditing(!isEditing)
   }
 
-  // 🔥 NUEVO: Función para limpiar la oración
-  const clearSentence = () => {
-    setSentence("")
-    // También enviar comando al backend para limpiar
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: "clear_sentence",
-        timestamp: Date.now()
-      }))
-    }
+  // 🔥 NUEVO: Reiniciar todo
+  const resetAll = () => {
+    stopRecording()
+    setRecordedFrames([])
+    setDetectedWord("")
+    setDetectionConfidence(0)
+    setIsProcessing(false)
   }
 
   useEffect(() => {
@@ -263,7 +287,7 @@ export default function MirrorApp() {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
       }
-      stopSendingFrames()
+      stopRecording()
       if (wsRef.current) {
         wsRef.current.close()
       }
@@ -294,6 +318,23 @@ export default function MirrorApp() {
             <WifiOff className="h-6 w-6 text-purple-400" strokeWidth={2.5} />
           )}
         </button>
+        
+        {/* 🔥 CAMBIO: Indicador de estado de grabación */}
+        <div className="flex items-center gap-2">
+          {isRecording && (
+            <div className="flex items-center gap-1 bg-red-500/20 px-2 py-1 rounded-full">
+              <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
+              <span className="text-xs text-red-400">GRABANDO</span>
+            </div>
+          )}
+          {isProcessing && (
+            <div className="flex items-center gap-1 bg-blue-500/20 px-2 py-1 rounded-full">
+              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+              <span className="text-xs text-blue-400">PROCESANDO</span>
+            </div>
+          )}
+        </div>
+
         <div
           className={`h-10 w-10 rounded-full transition-all duration-300 ${
             isConnecting
@@ -308,7 +349,9 @@ export default function MirrorApp() {
       </div>
 
       <div className="px-4 pb-2 shrink-0">
-        <h1 className="text-center text-xl font-bold tracking-wider">TRANSCRIPCIÓN</h1>
+        <h1 className="text-center text-xl font-bold tracking-wider">
+          {isRecording ? "GRABANDO SEÑA..." : "GRABADOR DE SEÑAS"}
+        </h1>
         <div className="mt-1 h-px bg-gradient-to-r from-transparent via-purple-500 to-transparent" />
       </div>
 
@@ -321,9 +364,6 @@ export default function MirrorApp() {
                 <div className="mb-1">
                   <p className="text-xs font-semibold text-red-400">WebSocket:</p>
                   <p className="text-xs text-red-300">{connectionError}</p>
-                  {connectionError.includes("wss://") && (
-                    <p className="text-xs text-red-300/70 mt-1">💡 Usa ngrok o configura SSL en Python</p>
-                  )}
                 </div>
               )}
               {cameraError && (
@@ -346,24 +386,42 @@ export default function MirrorApp() {
         </div>
       )}
 
-      {/* 🔥 CAMBIO: Mostrar traducción actual */}
+      {/* 🔥 CAMBIO: Mostrar estado de grabación y resultado */}
       <div className="px-6 py-2 shrink-0">
         <div className="text-center">
-          {currentPrediction ? (
+          {isProcessing ? (
             <div className="space-y-1">
-              <div className="text-2xl font-bold text-purple-400">
-                {currentPrediction}
-                <span className="text-lg text-purple-300 ml-2">
-                  ({Math.round(currentConfidence * 100)}%)
+              <div className="text-lg text-blue-400 animate-pulse">
+                Analizando grabación...
+              </div>
+              <div className="text-xs text-zinc-400">
+                {recordedFrames.length} frames capturados
+              </div>
+            </div>
+          ) : detectedWord ? (
+            <div className="space-y-1">
+              <div className="text-2xl font-bold text-green-400">
+                {detectedWord}
+                <span className="text-lg text-green-300 ml-2">
+                  ({Math.round(detectionConfidence * 100)}%)
                 </span>
               </div>
               <div className="text-xs text-zinc-400">
-                Detectando en tiempo real...
+                Palabra detectada
+              </div>
+            </div>
+          ) : isRecording ? (
+            <div className="space-y-1">
+              <div className="text-lg text-red-400">
+                Grabando... {recordedFrames.length} frames
+              </div>
+              <div className="text-xs text-zinc-400">
+                Haz tu seña completa
               </div>
             </div>
           ) : (
             <div className="text-lg text-zinc-500">
-              {isConnected && isCameraOn ? "Haz una seña..." : "Conecta y activa la cámara"}
+              {isConnected && isCameraOn ? "Listo para grabar" : "Conecta y activa la cámara"}
             </div>
           )}
         </div>
@@ -375,8 +433,7 @@ export default function MirrorApp() {
             <div className="flex h-full w-full items-center justify-center bg-zinc-900">
               <div className="text-center">
                 <Play className="h-12 w-12 text-purple-400 mx-auto mb-2" />
-                <p className="text-sm text-zinc-400">Presiona Play para iniciar</p>
-                <p className="text-xs text-zinc-500 mt-1">La cámara se activará como espejo</p>
+                <p className="text-sm text-zinc-400">Activa la cámara para comenzar</p>
               </div>
             </div>
           ) : cameraError ? (
@@ -384,7 +441,6 @@ export default function MirrorApp() {
               <div className="text-center">
                 <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-2" />
                 <p className="text-sm text-zinc-400">Cámara no disponible</p>
-                <p className="text-xs text-zinc-500 mt-1">Permite el acceso en tu navegador</p>
               </div>
             </div>
           ) : (
@@ -400,51 +456,75 @@ export default function MirrorApp() {
         </div>
       </div>
 
-      <div className="flex items-center justify-center gap-8 px-4 py-3 shrink-0">
+      {/* 🔥 CAMBIO: Controles de grabación */}
+      <div className="flex items-center justify-center gap-4 px-4 py-3 shrink-0">
         <button onClick={toggleCamera} className="rounded-full p-2 hover:bg-zinc-800 transition-colors">
           <RotateCw className="h-6 w-6 text-zinc-400" />
         </button>
-        <button onClick={toggleCameraOnOff} className="rounded-full p-2 hover:bg-zinc-800 transition-colors">
-          {isCameraOn ? <Pause className="h-6 w-6 text-zinc-400" /> : <Play className="h-6 w-6 text-zinc-400" />}
-        </button>
+        
+        {!isRecording ? (
+          <button 
+            onClick={startRecording} 
+            disabled={!isConnected || !isCameraOn}
+            className="rounded-full p-4 bg-red-500 hover:bg-red-600 disabled:bg-zinc-700 disabled:cursor-not-allowed transition-colors"
+          >
+            <Play className="h-8 w-8 text-white" />
+          </button>
+        ) : (
+          <button 
+            onClick={stopRecording}
+            className="rounded-full p-4 bg-red-500 hover:bg-red-600 transition-colors"
+          >
+            <Square className="h-8 w-8 text-white" />
+          </button>
+        )}
+        
         <button onClick={toggleEditing} className="rounded-full p-2 hover:bg-zinc-800 transition-colors">
           <Edit3 className={`h-6 w-6 ${isEditing ? "text-purple-400" : "text-zinc-400"}`} />
         </button>
       </div>
 
-      {/* 🔥 CAMBIO: Mostrar oración acumulada en lugar del JSON */}
-      <div className="px-6 pb-3 shrink-0">
-        <div className="rounded-lg border-2 border-purple-500 bg-purple-500/10 p-4 min-h-[96px]">
-          <div className="flex items-start justify-between mb-2">
-            <span className="text-sm font-semibold text-purple-300">FRASE COMPLETA:</span>
-            {sentence && (
-              <button 
-                onClick={clearSentence}
-                className="text-xs text-zinc-400 hover:text-white transition-colors"
-              >
-                Limpiar
-              </button>
-            )}
-          </div>
-          <div className={`text-lg ${sentence ? "text-white" : "text-zinc-500"}`}>
-            {sentence || "Las palabras se irán acumulando aquí..."}
-          </div>
-        </div>
-      </div>
-
+      {/* 🔥 CAMBIO: Botones de acción */}
       <div className="flex gap-3 px-6 pb-4 shrink-0">
         <Button
-          variant="outline"
-          className="flex-1 border-2 border-pink-500 bg-transparent text-pink-500 hover:bg-pink-500/10 text-base font-semibold py-4"
-        >
-          VOLVER
-        </Button>
-        <Button
+          onClick={resetAll}
           variant="outline"
           className="flex-1 border-2 border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 text-base font-semibold py-4"
         >
-          GUARDAR
+          REINICIAR
         </Button>
+        
+        <Button
+          onClick={sendRecordingForAnalysis}
+          disabled={!recordedFrames.length || isProcessing || isRecording}
+          variant="outline"
+          className="flex-1 border-2 border-green-500 bg-transparent text-green-500 hover:bg-green-500/10 disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-400 text-base font-semibold py-4"
+        >
+          {isProcessing ? (
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+              ANALIZANDO
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Send className="h-4 w-4" />
+              ANALIZAR GRABACIÓN
+            </div>
+          )}
+        </Button>
+      </div>
+
+      {/* 🔥 INFO: Estado de la grabación */}
+      <div className="px-6 pb-3 shrink-0">
+        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+          <div className="text-xs text-zinc-400 text-center">
+            {recordedFrames.length > 0 ? (
+              `📹 ${recordedFrames.length} frames grabados - Listos para analizar`
+            ) : (
+              "🎥 Graba una seña completa y luego analízala"
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
