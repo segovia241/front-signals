@@ -3,137 +3,201 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { RotateCw, Play, Pause, Edit3, Wifi, WifiOff, AlertCircle, X } from "lucide-react"
-import { WebSocketManager } from "@/lib/websocket"
-import { CameraManager } from "@/lib/camera"
 
 export default function MirrorApp() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const wsManagerRef = useRef<WebSocketManager | null>(null)
-  const cameraManagerRef = useRef<CameraManager | null>(null)
-
+  const wsRef = useRef<WebSocket | null>(null)
+  const frameIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
 
+  const [stream, setStream] = useState<MediaStream | null>(null)
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user")
   const [isCameraOn, setIsCameraOn] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [transcriptionText, setTranscriptionText] = useState("")
 
-  useEffect(() => {
-    wsManagerRef.current = new WebSocketManager()
-    cameraManagerRef.current = new CameraManager()
+  const connectWebSocket = () => {
+    setIsConnecting(true)
+    setConnectionError(null)
 
-    const wsManager = wsManagerRef.current
-    const cameraManager = cameraManagerRef.current
+    try {
+      const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || "ws://56.124.87.123:8000/ws"
+      console.log("[v0] Intentando conectar a WebSocket:", wsUrl)
 
-    if (videoRef.current) {
-      cameraManager.setVideoElement(videoRef.current)
-    }
-    if (canvasRef.current) {
-      cameraManager.setCanvasElement(canvasRef.current)
-    }
+      const ws = new WebSocket(wsUrl)
 
-    wsManager.onStatusChange((status) => {
-      if (status === "connected") {
+      ws.onopen = () => {
+        console.log("[v0] WebSocket conectado exitosamente")
         setIsConnected(true)
         setConnectionError(null)
         setIsConnecting(false)
         if (isCameraOn) {
-          cameraManager.startCapture(10)
+          startSendingFrames()
         }
-      } else if (status === "disconnected") {
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const response = JSON.parse(event.data)
+
+          if (response.type === "analysis") {
+            const formattedJson = JSON.stringify(response, null, 2)
+            setTranscriptionText(formattedJson)
+          }
+        } catch (err) {
+          console.error("[v0] Error parseando respuesta:", err)
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error("[v0] Error en WebSocket:", error)
         setIsConnected(false)
         setIsConnecting(false)
-        cameraManager.stopCapture()
-      } else if (status === "connecting") {
-        setIsConnecting(true)
-      } else if (status === "error") {
+        setConnectionError("Conexión bloqueada por seguridad. Usa wss:// o despliega con HTTP")
+      }
+
+      ws.onclose = () => {
         setIsConnected(false)
         setIsConnecting(false)
+        stopSendingFrames()
       }
-    })
 
-    wsManager.onError((error) => {
-      setConnectionError(error)
-    })
-
-    wsManager.onMessage((response) => {
-      const jsonString = JSON.stringify(response, null, 2)
-      setTranscriptionText(jsonString)
-    })
-
-    cameraManager.onFrame((frame) => {
-      if (wsManager.isConnected()) {
-        wsManager.send({
-          type: "frame",
-          data: frame.imageData,
-          timestamp: frame.timestamp,
-          dimensions: {
-            width: frame.width,
-            height: frame.height,
-          },
-        })
+      wsRef.current = ws
+    } catch (error) {
+      console.error("[v0] Error creando WebSocket:", error)
+      if (error instanceof DOMException && error.message.includes("insecure")) {
+        setConnectionError("HTTPS requiere wss:// - Configura SSL en tu servidor Python")
+      } else {
+        setConnectionError("No se puede conectar al servidor")
       }
-    })
-
-    cameraManager.onError((error) => {
-      setCameraError(error)
-    })
-
-    return () => {
-      cameraManager.stop()
-      wsManager.disconnect()
+      setIsConnected(false)
+      setIsConnecting(false)
     }
-  }, [])
-
-  useEffect(() => {
-    const cameraManager = cameraManagerRef.current
-    if (!cameraManager) return
-
-    if (isConnected && isCameraOn) {
-      cameraManager.startCapture(10)
-    } else {
-      cameraManager.stopCapture()
-    }
-  }, [isConnected, isCameraOn])
-
-  const connectWebSocket = () => {
-    const wsManager = wsManagerRef.current
-    if (!wsManager) return
-
-    const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || "ws://56.124.87.123:8000/ws"
-    wsManager.connect(wsUrl)
   }
 
   const disconnectWebSocket = () => {
-    const wsManager = wsManagerRef.current
-    if (!wsManager) return
-
-    wsManager.disconnect()
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
     setIsConnected(false)
     setIsConnecting(false)
     setConnectionError(null)
+    stopSendingFrames()
+  }
+
+  const sendFrameToServer = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return
+    }
+
+    if (!videoRef.current || !canvasRef.current) {
+      return
+    }
+
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext("2d")
+
+    if (!ctx) return
+
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+    const imageData = canvas.toDataURL("image/jpeg", 0.7)
+
+    const message = {
+      type: "frame",
+      data: imageData,
+      timestamp: Date.now(),
+      dimensions: {
+        width: canvas.width,
+        height: canvas.height,
+      },
+    }
+
+    try {
+      wsRef.current.send(JSON.stringify(message))
+    } catch (err) {
+      console.error("[v0] Error enviando frame:", err)
+    }
+  }
+
+  const startSendingFrames = () => {
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current)
+    }
+
+    frameIntervalRef.current = setInterval(() => {
+      sendFrameToServer()
+    }, 10)
+  }
+
+  const stopSendingFrames = () => {
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current)
+      frameIntervalRef.current = null
+    }
   }
 
   const startCamera = async (mode: "user" | "environment" = facingMode) => {
-    const cameraManager = cameraManagerRef.current
-    if (!cameraManager) return
+    try {
+      setCameraError(null)
 
-    setCameraError(null)
-    const success = await cameraManager.start(mode)
-    if (!success) {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop())
+      }
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: mode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      })
+
+      setStream(mediaStream)
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream
+      }
+
+      if (isConnected) {
+        startSendingFrames()
+      }
+    } catch (err) {
+      console.error("[v0] Error accessing camera:", err)
+      if (err instanceof DOMException) {
+        if (err.name === "NotAllowedError") {
+          setCameraError("Permiso de cámara denegado. Permite el acceso en tu navegador.")
+        } else if (err.name === "NotFoundError") {
+          setCameraError("No se encontró ninguna cámara en tu dispositivo.")
+        } else {
+          setCameraError("No se puede acceder a la cámara. Intenta recargar la página.")
+        }
+      } else {
+        setCameraError("Error desconocido al acceder a la cámara.")
+      }
       setIsCameraOn(false)
     }
   }
 
   const stopCamera = () => {
-    const cameraManager = cameraManagerRef.current
-    if (!cameraManager) return
-
-    cameraManager.stop()
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop())
+      setStream(null)
+      if (videoRef.current) {
+        videoRef.current.srcObject = null
+      }
+    }
+    stopSendingFrames()
   }
 
   const toggleCameraOnOff = () => {
@@ -155,6 +219,18 @@ export default function MirrorApp() {
   const toggleEditing = () => {
     setIsEditing(!isEditing)
   }
+
+  useEffect(() => {
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop())
+      }
+      stopSendingFrames()
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+    }
+  }, [])
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-white overflow-hidden">
@@ -281,7 +357,7 @@ export default function MirrorApp() {
           onChange={(e) => setTranscriptionText(e.target.value)}
           disabled={!isEditing}
           placeholder={isEditing ? "Escribe aquí..." : ""}
-          className="h-24 w-full rounded-lg border-2 border-purple-500 bg-transparent p-3 text-white resize-none focus:outline-none focus:border-purple-400 disabled:cursor-not-allowed placeholder:text-zinc-600 text-xs font-mono"
+          className="h-24 w-full rounded-lg border-2 border-purple-500 bg-transparent p-3 text-white resize-none focus:outline-none focus:border-purple-400 disabled:cursor-not-allowed placeholder:text-zinc-600"
         />
       </div>
 
