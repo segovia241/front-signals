@@ -18,7 +18,11 @@ export default function MirrorApp() {
   const [isCameraOn, setIsCameraOn] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [isEditing, setIsEditing] = useState(false)
-  const [transcriptionText, setTranscriptionText] = useState("")
+  
+  // 🔥 CAMBIO: Estados separados para la traducción
+  const [currentPrediction, setCurrentPrediction] = useState("")
+  const [currentConfidence, setCurrentConfidence] = useState(0)
+  const [sentence, setSentence] = useState("")
 
   const connectWebSocket = () => {
     setIsConnecting(true)
@@ -45,8 +49,29 @@ export default function MirrorApp() {
           const response = JSON.parse(event.data)
 
           if (response.type === "analysis") {
-            const formattedJson = JSON.stringify(response, null, 2)
-            setTranscriptionText(formattedJson)
+            const data = response.data
+            
+            // 🔥 CAMBIO: Extraer solo la información importante
+            if (data.current_prediction && data.current_prediction !== "Ninguna") {
+              setCurrentPrediction(data.current_prediction)
+              setCurrentConfidence(data.current_confidence)
+            } else {
+              setCurrentPrediction("")
+              setCurrentConfidence(0)
+            }
+            
+            // 🔥 CAMBIO: Actualizar la oración acumulada
+            if (data.sentence && data.sentence !== "Ninguna") {
+              setSentence(data.sentence)
+            }
+            
+            // 🔥 CAMBIO: Log para debugging (opcional)
+            console.log("[v0] Traducción:", {
+              current: data.current_prediction,
+              confidence: data.current_confidence,
+              sentence: data.sentence,
+              status: data.status
+            })
           }
         } catch (err) {
           console.error("[v0] Error parseando respuesta:", err)
@@ -134,9 +159,10 @@ export default function MirrorApp() {
       clearInterval(frameIntervalRef.current)
     }
 
+    // 🔥 CAMBIO: Ajustar FPS a 15 (66ms entre frames)
     frameIntervalRef.current = setInterval(() => {
       sendFrameToServer()
-    }, 10)
+    }, 66) // 1000ms / 15fps = 66ms
   }
 
   const stopSendingFrames = () => {
@@ -157,8 +183,8 @@ export default function MirrorApp() {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: mode,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: 1280 }, // 🔥 CAMBIO: Reducir resolución para mejor performance
+          height: { ideal: 720 },
         },
         audio: false,
       })
@@ -218,6 +244,18 @@ export default function MirrorApp() {
 
   const toggleEditing = () => {
     setIsEditing(!isEditing)
+  }
+
+  // 🔥 NUEVO: Función para limpiar la oración
+  const clearSentence = () => {
+    setSentence("")
+    // También enviar comando al backend para limpiar
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "clear_sentence",
+        timestamp: Date.now()
+      }))
+    }
   }
 
   useEffect(() => {
@@ -308,6 +346,29 @@ export default function MirrorApp() {
         </div>
       )}
 
+      {/* 🔥 CAMBIO: Mostrar traducción actual */}
+      <div className="px-6 py-2 shrink-0">
+        <div className="text-center">
+          {currentPrediction ? (
+            <div className="space-y-1">
+              <div className="text-2xl font-bold text-purple-400">
+                {currentPrediction}
+                <span className="text-lg text-purple-300 ml-2">
+                  ({Math.round(currentConfidence * 100)}%)
+                </span>
+              </div>
+              <div className="text-xs text-zinc-400">
+                Detectando en tiempo real...
+              </div>
+            </div>
+          ) : (
+            <div className="text-lg text-zinc-500">
+              {isConnected && isCameraOn ? "Haz una seña..." : "Conecta y activa la cámara"}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 px-6 py-3 min-h-0">
         <div className="relative mx-auto h-full max-w-sm overflow-hidden rounded-lg bg-pink-300">
           {!isCameraOn ? (
@@ -351,14 +412,24 @@ export default function MirrorApp() {
         </button>
       </div>
 
+      {/* 🔥 CAMBIO: Mostrar oración acumulada en lugar del JSON */}
       <div className="px-6 pb-3 shrink-0">
-        <textarea
-          value={transcriptionText}
-          onChange={(e) => setTranscriptionText(e.target.value)}
-          disabled={!isEditing}
-          placeholder={isEditing ? "Escribe aquí..." : ""}
-          className="h-24 w-full rounded-lg border-2 border-purple-500 bg-transparent p-3 text-white resize-none focus:outline-none focus:border-purple-400 disabled:cursor-not-allowed placeholder:text-zinc-600"
-        />
+        <div className="rounded-lg border-2 border-purple-500 bg-purple-500/10 p-4 min-h-[96px]">
+          <div className="flex items-start justify-between mb-2">
+            <span className="text-sm font-semibold text-purple-300">FRASE COMPLETA:</span>
+            {sentence && (
+              <button 
+                onClick={clearSentence}
+                className="text-xs text-zinc-400 hover:text-white transition-colors"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+          <div className={`text-lg ${sentence ? "text-white" : "text-zinc-500"}`}>
+            {sentence || "Las palabras se irán acumulando aquí..."}
+          </div>
+        </div>
       </div>
 
       <div className="flex gap-3 px-6 pb-4 shrink-0">
