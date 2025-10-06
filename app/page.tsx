@@ -106,17 +106,21 @@ export default function MirrorApp() {
 
     if (!ctx) return
 
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-    const frameData = canvas.toDataURL("image/jpeg", 0.8).split(",")[1]
+    const imageData = canvas.toDataURL("image/jpeg", 0.7)
 
     const message = {
       type: "frame",
-      data: frameData,
+      data: imageData,
       timestamp: Date.now(),
+      dimensions: {
+        width: canvas.width,
+        height: canvas.height,
+      },
     }
 
     try {
@@ -133,7 +137,7 @@ export default function MirrorApp() {
 
     frameIntervalRef.current = setInterval(() => {
       sendFrameToServer()
-    }, 1000)
+    }, 100)
   }
 
   const stopSendingFrames = () => {
