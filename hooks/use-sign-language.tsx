@@ -7,7 +7,7 @@ import { useState } from "react"
 
 // Ejemplo de cómo conectar desde Next.js
 export class SignLanguageAPI {
-  constructor(baseURL = "https://eldspathic-marya-prismatically.ngrok-free.dev") {
+  constructor(baseURL = "https://supersafe-jeanna-spinulose.ngrok-free.dev") {
     this.baseURL = baseURL
     this.ws = null
     this.sessionId = null
@@ -56,7 +56,7 @@ export class SignLanguageAPI {
   connectWebSocket(onMessage, onError, onClose) {
     this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-    this.ws = new WebSocket(`wss://eldspathic-marya-prismatically.ngrok-free.dev/ws/${this.sessionId}`)
+    this.ws = new WebSocket(`wss://supersafe-jeanna-spinulose.ngrok-free.dev/ws/${this.sessionId}`)
 
     this.ws.onopen = () => {
       console.log("WebSocket connected")
