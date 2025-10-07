@@ -5,50 +5,29 @@ import { useSignLanguage } from "@/hooks/use-sign-language"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Video, VideoOff, Activity, Hand } from "lucide-react"
+import { Video, VideoOff, Activity, Hand, Camera } from "lucide-react"
 
 export default function SignLanguagePage() {
-  const { isConnected, prediction, frame, connect, disconnect } = useSignLanguage()
+  const {
+    isConnected,
+    isCameraInitialized,
+    prediction,
+    error,
+    videoRef,
+    canvasRef,
+    connect,
+    disconnect,
+    captureSingleFrame,
+  } = useSignLanguage()
+
   const [isStarting, setIsStarting] = useState(false)
-  const [isCameraActive, setIsCameraActive] = useState(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const [isCapturingFrame, setIsCapturingFrame] = useState(false)
 
   useEffect(() => {
-    const startCamera = async () => {
-      if (isConnected && !streamRef.current) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 },
-            audio: false,
-          })
-          streamRef.current = stream
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream
-          }
-          console.log("[v0] Camera started successfully")
-        } catch (error) {
-          console.error("[v0] Error accessing camera:", error)
-          setIsCameraActive(false)
-        }
-      }
+    if (error) {
+      console.error("[v0] Error:", error)
     }
-
-    const stopCamera = () => {
-      if (!isConnected && streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-        streamRef.current = null
-        if (videoRef.current) {
-          videoRef.current.srcObject = null
-        }
-        setIsCameraActive(false)
-        console.log("[v0] Camera stopped")
-      }
-    }
-
-    startCamera()
-    stopCamera()
-  }, [isConnected])
+  }, [error])
 
   const handleStart = async () => {
     setIsStarting(true)
@@ -77,8 +56,16 @@ export default function SignLanguagePage() {
     setIsStarting(false)
   }
 
-  const handleVideoLoaded = () => {
-    setIsCameraActive(true)
+  const handleCaptureFrame = async () => {
+    setIsCapturingFrame(true)
+    try {
+      const result = await captureSingleFrame()
+      console.log("[v0] Single frame result:", result)
+    } catch (error) {
+      console.error("[v0] Failed to capture frame:", error)
+    } finally {
+      setIsCapturingFrame(false)
+    }
   }
 
   return (
@@ -103,6 +90,12 @@ export default function SignLanguagePage() {
                   Conectado
                 </Badge>
               )}
+              {isCameraInitialized && (
+                <Badge variant="outline" className="gap-1.5 border-blue-500/50 bg-blue-500/10 text-blue-500">
+                  <Camera className="h-3 w-3" />
+                  Cámara Activa
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -110,6 +103,15 @@ export default function SignLanguagePage() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
+        {error && (
+          <div className="mb-6 rounded-lg border border-red-500/50 bg-red-500/10 p-4">
+            <div className="flex items-center gap-2 text-red-500">
+              <Activity className="h-4 w-4" />
+              <span className="text-sm font-medium">Error: {error}</span>
+            </div>
+          </div>
+        )}
+
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Video Feed */}
           <div className="lg:col-span-2">
@@ -120,54 +122,78 @@ export default function SignLanguagePage() {
                   autoPlay
                   playsInline
                   muted
-                  onLoadedMetadata={handleVideoLoaded}
                   className="h-full w-full object-cover"
-                  style={{ display: isCameraActive ? "block" : "none" }}
+                  style={{ 
+                    display: isCameraInitialized ? "block" : "none",
+                    transform: "scaleX(-1)" // Espejo para selfie
+                  }}
                 />
-                {!isCameraActive && (
+                {!isCameraInitialized && (
                   <div className="flex h-full items-center justify-center">
                     <div className="text-center">
                       <Video className="mx-auto h-16 w-16 text-muted-foreground/50" />
                       <p className="mt-4 text-sm text-muted-foreground">
-                        {isConnected ? "Esperando señal de cámara..." : "Presiona iniciar para comenzar"}
+                        {isStarting ? "Inicializando cámara..." : "Presiona iniciar para comenzar"}
                       </p>
                     </div>
                   </div>
                 )}
 
-                {prediction?.hasHandDetection && (
-                  <div className="absolute top-4 right-4">
-                    <Badge className="gap-1.5 bg-green-500 text-white">
-                      <Hand className="h-3 w-3" />
-                      Mano detectada
-                    </Badge>
+                {/* Overlay para información de estado */}
+                {isCameraInitialized && (
+                  <div className="absolute bottom-4 left-4 flex gap-2">
+                    {prediction?.hasHandDetection && (
+                      <Badge className="gap-1.5 bg-green-500 text-white">
+                        <Hand className="h-3 w-3" />
+                        Mano detectada
+                      </Badge>
+                    )}
+                    {prediction?.sequenceReady && (
+                      <Badge className="gap-1.5 bg-blue-500 text-white">
+                        <Activity className="h-3 w-3" />
+                        Secuencia lista
+                      </Badge>
+                    )}
                   </div>
                 )}
               </div>
 
               <div className="border-t border-border bg-card p-4">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm text-muted-foreground">
-                    {isConnected ? "Cámara activa" : "Cámara inactiva"}
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className={`h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    {isConnected ? "Conectado al servidor" : "Desconectado"}
                   </div>
-                  <Button
-                    onClick={isConnected ? handleStop : handleStart}
-                    disabled={isStarting && !isConnected}
-                    variant={isConnected ? "destructive" : "default"}
-                    className="gap-2"
-                  >
-                    {isConnected ? (
-                      <>
-                        <VideoOff className="h-4 w-4" />
-                        Detener
-                      </>
-                    ) : (
-                      <>
-                        <Video className="h-4 w-4" />
-                        {isStarting ? "Iniciando..." : "Iniciar Cámara"}
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleCaptureFrame}
+                      disabled={!isCameraInitialized || isCapturingFrame}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      <Camera className="h-4 w-4" />
+                      {isCapturingFrame ? "Capturando..." : "Frame Único"}
+                    </Button>
+                    <Button
+                      onClick={isConnected ? handleStop : handleStart}
+                      disabled={isStarting && !isConnected}
+                      variant={isConnected ? "destructive" : "default"}
+                      className="gap-2"
+                    >
+                      {isConnected ? (
+                        <>
+                          <VideoOff className="h-4 w-4" />
+                          Detener
+                        </>
+                      ) : (
+                        <>
+                          <Video className="h-4 w-4" />
+                          {isStarting ? "Conectando..." : "Iniciar Cámara"}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -178,12 +204,12 @@ export default function SignLanguagePage() {
             {/* Current Prediction */}
             <Card className="border-border bg-card p-6">
               <h2 className="mb-4 text-sm font-medium text-muted-foreground">Predicción Actual</h2>
-              {prediction?.prediction ? (
+              {prediction?.prediction && prediction.prediction !== "---" ? (
                 <div className="space-y-4">
                   <div className="text-center">
                     <div className="mb-2 text-6xl font-bold text-primary">{prediction.prediction}</div>
                     <div className="text-sm text-muted-foreground">
-                      Confianza: {(prediction.confidence * 100).toFixed(1)}%
+                      Confianza: {Math.round(prediction.confidence * 100)}%
                     </div>
                   </div>
 
@@ -200,30 +226,74 @@ export default function SignLanguagePage() {
               ) : (
                 <div className="py-8 text-center">
                   <Hand className="mx-auto h-12 w-12 text-muted-foreground/30" />
-                  <p className="mt-4 text-sm text-muted-foreground">Esperando detección de señas...</p>
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    {isConnected ? "Realizando señas frente a la cámara..." : "Conecta la cámara para comenzar"}
+                  </p>
                 </div>
               )}
             </Card>
 
             {/* All Predictions */}
-            {prediction?.allPredictions && prediction.allPredictions.length > 0 && (
+            {prediction?.allPredictions && Object.keys(prediction.allPredictions).length > 0 && (
               <Card className="border-border bg-card p-6">
                 <h2 className="mb-4 text-sm font-medium text-muted-foreground">Todas las Predicciones</h2>
-                <div className="space-y-2">
-                  {prediction.allPredictions.slice(0, 5).map((pred: any, index: number) => (
-                    <div key={index} className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-sm font-bold text-primary">
-                          {pred.class}
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {Object.entries(prediction.allPredictions)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 8)
+                    .map(([className, confidence]) => (
+                      <div key={className} className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-sm font-bold text-primary">
+                            {className.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-sm font-medium text-foreground">{className}</span>
                         </div>
-                        <span className="text-sm font-medium text-foreground">Clase {pred.class}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm text-muted-foreground">{Math.round(confidence * 100)}%</span>
+                          <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full bg-primary transition-all duration-300"
+                              style={{ width: `${confidence * 100}%` }}
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-sm text-muted-foreground">{(pred.confidence * 100).toFixed(1)}%</span>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               </Card>
             )}
+
+            {/* System Status */}
+            <Card className="border-border bg-card p-6">
+              <h2 className="mb-4 text-sm font-medium text-muted-foreground">Estado del Sistema</h2>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Conexión WebSocket</span>
+                  <Badge variant={isConnected ? "default" : "secondary"}>
+                    {isConnected ? "Conectado" : "Desconectado"}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Cámara</span>
+                  <Badge variant={isCameraInitialized ? "default" : "secondary"}>
+                    {isCameraInitialized ? "Activa" : "Inactiva"}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Detección de manos</span>
+                  <Badge variant={prediction?.hasHandDetection ? "default" : "secondary"}>
+                    {prediction?.hasHandDetection ? "Detectada" : "No detectada"}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Secuencia</span>
+                  <Badge variant={prediction?.sequenceReady ? "default" : "secondary"}>
+                    {prediction?.sequenceReady ? "Lista" : "Incompleta"}
+                  </Badge>
+                </div>
+              </div>
+            </Card>
 
             {/* Info Card */}
             <Card className="border-border bg-card p-6">
@@ -235,20 +305,32 @@ export default function SignLanguagePage() {
                 </li>
                 <li className="flex gap-2">
                   <span className="text-primary">2.</span>
-                  <span>Coloca tu mano frente a la cámara</span>
+                  <span>Permite el acceso a la cámara cuando se solicite</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-primary">3.</span>
-                  <span>Realiza señas del lenguaje de señas</span>
+                  <span>Coloca tu mano frente a la cámara</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-primary">4.</span>
+                  <span>Realiza señas del lenguaje de señas</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary">5.</span>
                   <span>Observa las predicciones en tiempo real</span>
                 </li>
               </ul>
             </Card>
           </div>
         </div>
+
+        {/* Canvas oculto para procesamiento */}
+        <canvas
+          ref={canvasRef}
+          width="640"
+          height="480"
+          style={{ display: 'none' }}
+        />
       </main>
     </div>
   )
