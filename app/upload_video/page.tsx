@@ -1,98 +1,143 @@
- "use client"
+"use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
+import { useVideoUpload } from "@/hooks/use-video-upload"
 import { Button } from "@/components/ui/button"
-import { Volume2, Hand, ArrowLeft, Upload, Video, X } from "lucide-react"
+import { Volume2, ArrowLeft, Upload, Video, X, Play, Pause, RotateCcw } from "lucide-react"
 
 export default function VideoUploadPage() {
+  const { 
+    isConnected, 
+    isProcessing, 
+    prediction, 
+    error, 
+    videoInfo,
+    progress,
+    videoRef, 
+    canvasRef,
+    loadVideoFile,
+    connect, 
+    disconnect,
+    togglePause
+  } = useVideoUpload()
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [prediction, setPrediction] = useState<{prediction: string, confidence: number} | null>(null)
-  const [error, setError] = useState<string>("")
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const [isStarting, setIsStarting] = useState(false)
+  const [debugInfo, setDebugInfo] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    if (error) {
+      setDebugInfo(`Error: ${error}`)
+    }
+  }, [error])
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
-      // Validar que sea un archivo de video
       if (!file.type.startsWith('video/')) {
-        setError("Por favor selecciona un archivo de video válido")
-        return
-      }
-      
-      // Validar tamaño (opcional: máximo 100MB)
-      if (file.size > 100 * 1024 * 1024) {
-        setError("El archivo es demasiado grande. Máximo 100MB")
+        setDebugInfo("❌ Tipo de archivo no válido")
         return
       }
       
       setSelectedFile(file)
-      setError("")
-      setPrediction(null)
+      setDebugInfo(`📁 Cargando: ${file.name}`)
       
-      // Cargar el video en el elemento video
-      if (videoRef.current) {
-        const url = URL.createObjectURL(file)
-        videoRef.current.src = url
-        videoRef.current.load()
+      // Reiniciar estado si hay una conexión previa
+      if (isConnected) {
+        await handleStop()
+      }
+
+      // Cargar el archivo de video
+      const loaded = await loadVideoFile(file)
+      if (loaded) {
+        setDebugInfo(`✅ Video cargado: ${file.name}`)
+      } else {
+        setDebugInfo("❌ Error cargando video")
       }
     }
   }
 
-  const clearFile = () => {
+  const clearFile = async () => {
     setSelectedFile(null)
-    setPrediction(null)
-    if (videoRef.current) {
-      videoRef.current.src = ""
+    setDebugInfo("")
+    if (isConnected) {
+      await handleStop()
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
     }
-  }
-
-  const processVideo = async () => {
-    if (!selectedFile) return
-    
-    setIsProcessing(true)
-    setError("")
-    
-    try {
-      const formData = new FormData()
-      formData.append('video', selectedFile)
-      
-      // Llamar a la API para procesar el video
-      const response = await fetch('/api/process-video', {
-        method: 'POST',
-        body: formData,
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.message || 'Error al procesar el video')
-      }
-      
-      const result = await response.json()
-      setPrediction(result)
-      
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido al procesar el video')
-    } finally {
-      setIsProcessing(false)
+    if (videoRef.current) {
+      videoRef.current.src = ""
     }
   }
 
+  const handleStart = async () => {
+    if (!selectedFile) {
+      setDebugInfo("❌ No hay video seleccionado")
+      return
+    }
+    
+    console.log("🚀 Iniciando procesamiento de video...")
+    setIsStarting(true)
+    setDebugInfo("Conectando con el modelo...")
+    
+    try {
+      await connect(
+        (data) => {
+          console.log("[VIDEO_UPLOAD] WebSocket message:", data)
+          if (data.has_hand_detection !== undefined) {
+            setDebugInfo(prev => 
+              `Detección de manos: ${data.has_hand_detection ? "SÍ" : "NO"} | Predicción: ${data.prediction}`
+            )
+          }
+        },
+        (error) => {
+          console.error("[VIDEO_UPLOAD] WebSocket error:", error)
+          setDebugInfo(`Error de conexión: ${error}`)
+          setIsStarting(false)
+        },
+        () => {
+          console.log("[VIDEO_UPLOAD] WebSocket closed")
+          setDebugInfo("Conexión cerrada")
+          setIsStarting(false)
+        },
+      )
+      
+    } catch (error) {
+      console.error("[VIDEO_UPLOAD] Failed to start:", error)
+      setDebugInfo(`Error iniciando: ${error}`)
+      setIsStarting(false)
+    }
+  }
+
+  const handleStop = async () => {
+    console.log("🛑 Deteniendo procesamiento...")
+    setDebugInfo("Deteniendo...")
+    await disconnect()
+    setIsStarting(false)
+    setDebugInfo("Procesamiento detenido")
+  }
+
   const handleBack = () => {
-    // Add your navigation logic here
+    if (isConnected) {
+      handleStop()
+    }
     console.log("Navigate back")
   }
 
   const handlePlayAudio = () => {
-    if (prediction?.prediction) {
-      // Implementar lectura del texto en voz alta
+    if (prediction?.prediction && prediction.prediction !== "---") {
       const utterance = new SpeechSynthesisUtterance(prediction.prediction)
       utterance.lang = 'es-ES'
       speechSynthesis.speak(utterance)
+    }
+  }
+
+  const handleReplay = () => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0
+      videoRef.current.play().catch(console.error)
     }
   }
 
@@ -121,13 +166,13 @@ export default function VideoUploadPage() {
         <div className="bg-[#2a2a2a] rounded-xl p-4">
           <div className="text-center mb-4">
             <h2 className="text-white text-xl font-semibold mb-2">Sube tu video</h2>
-            <p className="text-white/60 text-sm">Selecciona un archivo de video para transcribir lenguaje de señas</p>
+            <p className="text-white/60 text-sm">Selecciona un video que muestre claramente las manos y señas</p>
           </div>
 
           <label className="flex flex-col items-center justify-center border-2 border-dashed border-purple-400/30 rounded-xl p-8 cursor-pointer hover:border-purple-400/50 transition-colors bg-black/20">
             <Upload className="h-12 w-12 text-purple-400 mb-3" />
             <span className="text-white text-lg font-medium">Haz clic para seleccionar video</span>
-            <span className="text-white/50 text-sm mt-2">Formatos: MP4, MOV, AVI (Max. 100MB)</span>
+            <span className="text-white/50 text-sm mt-2">Formatos: MP4, MOV, AVI</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -145,6 +190,7 @@ export default function VideoUploadPage() {
                   <p className="text-white font-medium text-sm">{selectedFile.name}</p>
                   <p className="text-white/50 text-xs">
                     {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB
+                    {videoInfo?.duration && ` • ${Math.round(videoInfo.duration)}s`}
                   </p>
                 </div>
               </div>
@@ -159,12 +205,13 @@ export default function VideoUploadPage() {
           )}
         </div>
 
-        {/* Video Preview */}
+        {/* Video Preview & Processing */}
         <div className="relative bg-black rounded-xl flex-1 min-h-0 overflow-hidden">
           <video
             ref={videoRef}
-            controls
-            className="w-full h-full object-contain rounded-xl"
+            muted
+            playsInline
+            className="w-full h-full object-contain rounded-xl bg-black"
           />
           
           {!selectedFile && (
@@ -172,13 +219,66 @@ export default function VideoUploadPage() {
               <div className="text-center px-4">
                 <Video className="mx-auto h-20 w-20 text-purple-400/30 mb-4" />
                 <p className="text-white/50 text-lg">Vista previa del video</p>
-                <p className="text-white/30 text-sm mt-2">Selecciona un archivo para verlo aquí</p>
+                <p className="text-white/30 text-sm mt-2">Selecciona un archivo para comenzar</p>
               </div>
             </div>
           )}
 
-          {/* Prediction Result */}
-          {prediction && (
+          {/* Controles de video */}
+          {selectedFile && (
+            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-2">
+              <button
+                onClick={handleReplay}
+                className="bg-black/70 hover:bg-black/90 text-white p-2 rounded-full transition-colors"
+                aria-label="Reiniciar"
+              >
+                <RotateCcw className="h-5 w-5" />
+              </button>
+              <button
+                onClick={togglePause}
+                className="bg-black/70 hover:bg-black/90 text-white p-3 rounded-full transition-colors"
+                aria-label={videoRef.current?.paused ? "Reproducir" : "Pausar"}
+              >
+                {videoRef.current?.paused ? <Play className="h-6 w-6" /> : <Pause className="h-6 w-6" />}
+              </button>
+            </div>
+          )}
+
+          {/* Barra de progreso */}
+          {isProcessing && (
+            <div className="absolute bottom-0 left-0 right-0 bg-purple-500/30 h-1">
+              <div 
+                className="bg-purple-500 h-full transition-all duration-100"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+
+          {/* Estado de procesamiento */}
+          {isProcessing && (
+            <div className="absolute inset-0 bg-black/70 flex items-center justify-center rounded-xl">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent mx-auto mb-4"></div>
+                <p className="text-white text-lg font-medium">Procesando video</p>
+                <p className="text-white/60 text-sm mt-2">
+                  {Math.round(progress)}% completado
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Indicador de estado */}
+          {isConnected && (
+            <div className="absolute top-4 left-4">
+              <div className="flex items-center gap-2 bg-red-500 text-white px-3 py-1.5 rounded-full text-sm font-medium">
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                EN VIVO
+              </div>
+            </div>
+          )}
+
+          {/* Resultado de predicción */}
+          {prediction?.prediction && prediction.prediction !== "---" && (
             <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-sm text-white px-6 py-4 rounded-xl border border-purple-500/30">
               <div className="text-center">
                 <div className="text-3xl font-bold text-purple-300 mb-1">
@@ -192,21 +292,19 @@ export default function VideoUploadPage() {
           )}
         </div>
 
-        {/* Status Messages */}
+        {/* Información de debug */}
+        {debugInfo && (
+          <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+            <p className="text-blue-400 text-xs font-mono">{debugInfo}</p>
+          </div>
+        )}
+
+        {/* Mensajes de error */}
         {error && (
           <div className="p-4 bg-red-500/20 border border-red-500/50 rounded-xl">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-red-400 rounded-full"></div>
               <p className="text-red-400 text-sm">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {isProcessing && (
-          <div className="p-4 bg-blue-500/20 border border-blue-500/50 rounded-xl">
-            <div className="flex items-center gap-3">
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-400 border-t-transparent"></div>
-              <p className="text-blue-400 text-sm">Procesando video, por favor espera...</p>
             </div>
           </div>
         )}
@@ -225,22 +323,24 @@ export default function VideoUploadPage() {
         </Button>
 
         <Button
-          onClick={processVideo}
-          disabled={!selectedFile || isProcessing}
+          onClick={isConnected ? handleStop : handleStart}
+          disabled={!selectedFile || (isStarting && !isConnected)}
           size="lg"
           className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0 h-14 text-base font-semibold rounded-xl shadow-lg"
         >
-          {isProcessing ? (
+          {isConnected ? (
+            "DETENER"
+          ) : isStarting ? (
             <div className="flex items-center gap-2">
               <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              PROCESANDO
+              CONECTANDO...
             </div>
           ) : (
-            "TRANSCRIBIR VIDEO"
+            "PROCESAR VIDEO"
           )}
         </Button>
 
-        {prediction && (
+        {prediction?.prediction && prediction.prediction !== "---" && (
           <button
             onClick={handlePlayAudio}
             className="px-4 hover:bg-white/5 rounded-xl transition-colors flex items-center justify-center"
@@ -250,6 +350,9 @@ export default function VideoUploadPage() {
           </button>
         )}
       </div>
+
+      {/* Canvas oculto para procesamiento */}
+      <canvas ref={canvasRef} width="640" height="480" style={{ display: "none" }} />
     </div>
   )
 }
