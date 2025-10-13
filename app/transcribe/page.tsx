@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { useSignLanguage } from "@/hooks/use-sign-language"
 import { Button } from "@/components/ui/button"
 import { Volume2, Hand, ArrowLeft } from "lucide-react"
+import router from "next/router"
 
 export default function SignLanguagePage() {
   const { isConnected, isCameraInitialized, prediction, error, videoRef, canvasRef, connect, disconnect } =
@@ -54,7 +55,8 @@ export default function SignLanguagePage() {
   return (
     <div className="h-screen w-screen bg-[#1a1a1a] flex flex-col overflow-hidden">
       <header className="bg-[#2a2a2a] px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <button onClick={handleBack} className="p-2 hover:bg-white/10 rounded-lg transition-colors" aria-label="Volver">
+        <button onClick={() => router.push("/transcribe")} className="p-2 hover:bg-white/10 rounded-lg transition-colors" aria-label="Volver">
+        
           <Hand className="h-6 w-6 text-purple-400" />
         </button>
 
