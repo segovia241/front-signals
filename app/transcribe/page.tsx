@@ -52,8 +52,8 @@ export default function SignLanguagePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#1a1a1a] flex flex-col">
-      <header className="bg-[#2a2a2a] px-4 py-3 flex items-center justify-between">
+    <div className="h-screen w-screen bg-[#1a1a1a] flex flex-col overflow-hidden">
+      <header className="bg-[#2a2a2a] px-4 py-3 flex items-center justify-between flex-shrink-0">
         <button onClick={handleBack} className="p-2 hover:bg-white/10 rounded-lg transition-colors" aria-label="Volver">
           <Hand className="h-6 w-6 text-purple-400" />
         </button>
@@ -65,10 +65,10 @@ export default function SignLanguagePage() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col min-h-0">
         {/* Video Feed */}
-        <div className="relative bg-black">
-          <div className="aspect-[9/16] max-h-[60vh] relative">
+        <div className="relative bg-black flex-1 min-h-0">
+          <div className="w-full h-full relative">
             <video
               ref={videoRef}
               autoPlay
@@ -110,32 +110,32 @@ export default function SignLanguagePage() {
           </div>
         </div>
 
-        <div className="flex-1 bg-[#1a1a1a] px-6 py-8 flex flex-col justify-between">
-          <div>
+        <div className="flex-1 bg-[#1a1a1a] px-6 py-4 flex flex-col justify-between min-h-0">
+          <div className="flex-1 flex items-center">
             <p className="text-white text-lg leading-relaxed">
               Prestemos mucha atención. <span className="text-yellow-400 font-medium">Especialmente</span>, en las
               expresiones del rostro.
             </p>
-
-            {error && (
-              <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
           </div>
 
-          <button className="self-end p-4 hover:bg-white/5 rounded-full transition-colors" aria-label="Audio">
-            <Volume2 className="h-8 w-8 text-white" />
+          {error && (
+            <div className="mt-2 p-3 bg-red-500/20 border border-red-500/50 rounded-lg">
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+          )}
+
+          <button className="self-end p-3 hover:bg-white/5 rounded-full transition-colors mt-2" aria-label="Audio">
+            <Volume2 className="h-7 w-7 text-white" />
           </button>
         </div>
       </main>
 
-      <div className="bg-[#2a2a2a] px-4 py-4 flex gap-3 border-t border-white/10">
+      <div className="bg-[#2a2a2a] px-4 py-3 flex gap-3 border-t border-white/10 flex-shrink-0">
         <Button
           onClick={handleBack}
           variant="outline"
           size="lg"
-          className="flex-1 bg-purple-600 hover:bg-purple-700 text-white border-0 h-14 text-base font-semibold rounded-xl"
+          className="flex-1 bg-purple-600 hover:bg-purple-700 text-white border-0 h-12 text-base font-semibold rounded-xl"
         >
           <ArrowLeft className="h-5 w-5 mr-2" />
           VOLVER
@@ -145,7 +145,7 @@ export default function SignLanguagePage() {
           onClick={isConnected ? handleStop : handleStart}
           disabled={isStarting && !isConnected}
           size="lg"
-          className="flex-1 bg-gradient-to-r from-pink-500 to-fuchsia-500 hover:from-pink-600 hover:to-fuchsia-600 text-white border-0 h-14 text-base font-semibold rounded-xl"
+          className="flex-1 bg-gradient-to-r from-pink-500 to-fuchsia-500 hover:from-pink-600 hover:to-fuchsia-600 text-white border-0 h-12 text-base font-semibold rounded-xl"
         >
           {isConnected ? "DETENER" : isStarting ? "CONECTANDO..." : "GRABAR"}
         </Button>

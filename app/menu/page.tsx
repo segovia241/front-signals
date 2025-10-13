@@ -36,6 +36,7 @@ export default function MenuPage() {
         </Button>
 
         <Button
+          onClick={() => router.push("/upload_video")}
           variant="outline"
           className="h-16 w-full max-w-[320px] rounded-xl border-2 border-[#8b5cf6] bg-transparent text-base font-bold text-[#8b5cf6] hover:bg-[#8b5cf6]/10"
         >
