@@ -317,7 +317,7 @@ export default function VideoUploadPage() {
       {/* Footer Actions */}
       <div className="bg-[#2a2a2a] px-3 py-3 flex gap-2 border-t border-white/10 flex-shrink-0">
         <Button
-          onClick={() => router.push("/transcribe")}
+          onClick={() => router.push("/")}
           variant="outline"
           size="sm"
           className="flex-1 bg-transparent hover:bg-white/10 text-white border border-white/20 h-12 text-sm font-semibold rounded-lg"

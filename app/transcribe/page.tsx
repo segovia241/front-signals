@@ -55,7 +55,7 @@ export default function SignLanguagePage() {
   return (
     <div className="h-screen w-screen bg-[#1a1a1a] flex flex-col overflow-hidden">
       <header className="bg-[#2a2a2a] px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <button onClick={() => router.push("/transcribe")} className="p-2 hover:bg-white/10 rounded-lg transition-colors" aria-label="Volver">
+        <button onClick={() => router.push("/")} className="p-2 hover:bg-white/10 rounded-lg transition-colors" aria-label="Volver">
         
           <Hand className="h-6 w-6 text-purple-400" />
         </button>
